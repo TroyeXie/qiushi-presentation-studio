@@ -13,7 +13,7 @@ test('portable runtime preserves private workspaces, encrypted profiles, file pr
   const data = await fs.mkdtemp(path.join(os.tmpdir(), 'qiushi-runtime-'));
   const port = 18000 + Math.floor(Math.random() * 15000), origin = `http://127.0.0.1:${port}`;
   const child = spawn(process.execPath, ['dist/server.mjs'], { cwd: root,
-    env: { ...process.env, PORT: String(port), DATA_DIR: data, MODEL_API_KEY: '', MODEL_BACKUP_API_KEY: '', PUBLIC_URL: '', SESSION_SECRET: '', MODEL_CONFIG_ENCRYPTION_KEY: '' }, stdio: ['ignore', 'pipe', 'pipe'] });
+    env: { ...process.env, PORT: String(port), DATA_DIR: data, MODEL_API_KEY: '', MODEL_BACKUP_API_KEY: '', PUBLIC_URL: '', SESSION_COOKIE_MODE: '', SESSION_SECRET: '', MODEL_CONFIG_ENCRYPTION_KEY: '' }, stdio: ['ignore', 'pipe', 'pipe'] });
   let logs = ''; child.stdout.on('data', bytes => { logs += bytes; }); child.stderr.on('data', bytes => { logs += bytes; });
   t.after(async () => { if (child.exitCode === null) { child.kill('SIGTERM'); await new Promise(resolve => child.once('exit', resolve)); } await fs.rm(data, { recursive: true, force: true }); });
   for (let attempt = 0; ; attempt++) {
@@ -21,7 +21,7 @@ test('portable runtime preserves private workspaces, encrypted profiles, file pr
     if (attempt >= 100 || child.exitCode !== null) throw new Error('Runtime did not start: ' + logs);
     await new Promise(resolve => setTimeout(resolve, 50));
   }
-  const session = async () => { const response = await fetch(origin + '/api/session'); assert.equal(response.status, 200); return { cookie: response.headers.get('set-cookie').split(';')[0], body: await response.json() }; };
+  const session = async () => { const response = await fetch(origin + '/api/session'); assert.equal(response.status, 200); const attributes = response.headers.get('set-cookie'); assert.match(attributes, /; HttpOnly;/); assert.match(attributes, /; SameSite=Lax/); assert.doesNotMatch(attributes, /Partitioned|SameSite=None/); return { cookie: attributes.split(';')[0], body: await response.json() }; };
   const one = await session(), two = await session(); assert.notEqual(one.body.user.id, two.body.user.id);
   assert.equal(one.body.model.configured, false); assert.equal(one.body.user.name, '我的工作区');
   const call = (url, cookie = one.cookie, method = 'GET', body, headers = {}) => fetch(origin + url, { method, headers: { cookie, ...(method !== 'GET' ? { Origin: origin } : {}), ...headers }, ...(body !== undefined ? { body: typeof body === 'string' || body instanceof Uint8Array ? body : JSON.stringify(body) } : {}) });
@@ -81,4 +81,34 @@ test('portable runtime preserves private workspaces, encrypted profiles, file pr
     assert.equal((await call('/api/samples/' + sample.id + '/thumbnail')).status, 200);
   }
   const health = await fetch(origin + '/healthz'); assert.equal(health.status, 200);
+});
+
+test('HTTPS embedded mode sets a signed partitioned cookie and keeps exact-origin write protection', async t => {
+  const root = path.resolve(import.meta.dirname, '..');
+  const data = await fs.mkdtemp(path.join(os.tmpdir(), 'qiushi-embedded-'));
+  const port = 33000 + Math.floor(Math.random() * 10000), origin = `http://127.0.0.1:${port}`;
+  const publicOrigin = 'https://presentation.example.org';
+  const child = spawn(process.execPath, ['dist/server.mjs'], { cwd: root,
+    env: { ...process.env, PORT: String(port), DATA_DIR: data, PUBLIC_URL: publicOrigin, SESSION_COOKIE_MODE: 'embedded', SESSION_SECRET: '', MODEL_CONFIG_ENCRYPTION_KEY: '' }, stdio: ['ignore', 'pipe', 'pipe'] });
+  let logs = ''; child.stdout.on('data', bytes => { logs += bytes; }); child.stderr.on('data', bytes => { logs += bytes; });
+  t.after(async () => { if (child.exitCode === null) { child.kill('SIGTERM'); await new Promise(resolve => child.once('exit', resolve)); } await fs.rm(data, { recursive: true, force: true }); });
+  for (let attempt = 0; ; attempt++) {
+    try { if ((await fetch(origin + '/healthz')).ok) break; } catch {}
+    if (attempt >= 100 || child.exitCode !== null) throw new Error('Embedded runtime did not start: ' + logs);
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
+  const response = await fetch(origin + '/api/session'); assert.equal(response.status, 200);
+  const attributes = response.headers.get('set-cookie'), cookie = attributes.split(';')[0];
+  for (const value of ['HttpOnly', 'SameSite=None', 'Secure', 'Partitioned']) assert.match(attributes, new RegExp('; ' + value + '(?:;|$)'));
+  assert.doesNotMatch(attributes, /SameSite=Lax|Domain=/);
+  const first = (await response.json()).user;
+  const repeated = await fetch(origin + '/api/session', { headers: { Cookie: cookie } });
+  assert.equal((await repeated.json()).user.id, first.id); assert.equal(repeated.headers.get('set-cookie'), null);
+  const input = { name: 'embedded.txt', size: 12 };
+  const allowed = await fetch(origin + '/api/materials', { method: 'POST', headers: { Cookie: cookie, Origin: publicOrigin }, body: JSON.stringify(input) });
+  assert.equal(allowed.status, 200);
+  const denied = await fetch(origin + '/api/materials', { method: 'POST', headers: { Cookie: cookie, Origin: 'https://embedding-site.example.org' }, body: JSON.stringify(input) });
+  assert.equal(denied.status, 403);
+  const tampered = cookie.slice(0, -1) + (cookie.endsWith('A') ? 'B' : 'A');
+  assert.equal((await fetch(origin + '/api/projects', { headers: { Cookie: tampered } })).status, 401);
 });

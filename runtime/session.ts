@@ -17,7 +17,10 @@ export function attachSession(request: Request, create = false) {
   let setCookie: string | undefined;
   if (!id && create) {
     id = randomUUID(); const value = id + '.' + Math.floor(Date.now() / 1000 + 365 * 86400);
-    setCookie = cookieName + '=' + value + '.' + signature(value) + '; Path=/; HttpOnly; SameSite=Lax; Max-Age=31536000' + (new URL(request.url).protocol === 'https:' ? '; Secure' : '');
+    const policy = process.env.SESSION_COOKIE_MODE === 'embedded'
+      ? '; SameSite=None; Secure; Partitioned'
+      : '; SameSite=Lax' + (new URL(request.url).protocol === 'https:' ? '; Secure' : '');
+    setCookie = cookieName + '=' + value + '.' + signature(value) + '; Path=/; HttpOnly; Max-Age=31536000' + policy;
   }
   if (id) users.set(request, { id, name: '我的工作区', email: '' });
   return setCookie;

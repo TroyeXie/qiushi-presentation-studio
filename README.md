@@ -40,6 +40,7 @@ docker run --rm -p 7860:7860 -v qiushi-data:/mnt/workspace qiushi-presentation-s
 | `PORT` | 默认 `7860` |
 | `DATA_DIR` | SQLite、上传对象、工作区签名与加密密钥目录 |
 | `PUBLIC_URL` | 最终 HTTPS 站点地址；宿主修改 Host 时填写 |
+| `SESSION_COOKIE_MODE` | 默认使用 `SameSite=Lax`；跨站 iframe 的 HTTPS 部署设置 `embedded`，启用 `SameSite=None; Secure; Partitioned` |
 | `MODEL_API_URL` | 默认 `https://api.deepseek.com/chat/completions` |
 | `MODEL_NAME` | 默认 `deepseek-flash`，界面显示 `DeepSeek-V4.1-Flash` |
 | `MODEL_API_KEY` | 可选的平台模型私密密钥 |
@@ -50,6 +51,8 @@ docker run --rm -p 7860:7860 -v qiushi-data:/mnt/workspace qiushi-presentation-s
 | `MODEL_CONFIG_ENCRYPTION_KEY` | 可选，32 字节随机值的标准 Base64；缺省生成并持久保存 |
 
 如使用 `.env`，运行时可使用 `node --env-file=.env dist/server.mjs`；容器环境请使用平台私密变量。不要将真实密钥提交仓库。
+
+魔搭页面将应用嵌入在不同站点的 iframe 中。请将 `PUBLIC_URL` 设置为实际 `https://…ms.show` 应用地址，并设置 `SESSION_COOKIE_MODE=embedded`。此模式仍使用签名、HttpOnly 工作区 Cookie，并保留写入请求的精确来源校验；浏览器将 Cookie 按顶层站点分区，因此直接打开应用与从魔搭页面嵌入访问可能对应不同工作区。
 
 ## 已发布样片与范围
 
